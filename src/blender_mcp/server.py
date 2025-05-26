@@ -515,6 +515,71 @@ def get_hyper3d_status(ctx: Context) -> str:
         logger.error(f"Error checking Hyper3D status: {str(e)}")
         return f"Error checking Hyper3D status: {str(e)}"
 
+
+@mcp.tool()
+def set_polyhaven_integration(ctx: Context, enabled: bool) -> str:
+    """
+    Enables or disables the Polyhaven integration in the Blender addon.
+    This controls whether Polyhaven tools can be used. Check status with `get_polyhaven_status`.
+
+    Example:
+    To enable Polyhaven: `set_polyhaven_integration(enabled=True)`
+    To disable Polyhaven: `set_polyhaven_integration(enabled=False)`
+
+    Parameters:
+    - enabled: Boolean value to enable (True) or disable (False) the integration.
+    
+    Returns:
+    A JSON string indicating the outcome of the operation.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command(
+            "set_integration_enabled",
+            {"integration_name": "polyhaven", "enabled": enabled}
+        )
+        
+        # The addon returns a dict with "status" and "message".
+        # We'll use the message directly if success, or format an error string.
+        if result.get("status") == "success":
+            return result.get("message", "PolyHaven integration status updated successfully.")
+        else:
+            return f"Error updating PolyHaven integration: {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in set_polyhaven_integration: {str(e)}")
+        return f"Error setting PolyHaven integration: {str(e)}"
+
+@mcp.tool()
+def set_hyper3d_integration(ctx: Context, enabled: bool) -> str:
+    """
+    Enables or disables the Hyper3D integration in the Blender addon.
+    This controls whether Hyper3D tools can be used. Check status with `get_hyper3d_status`.
+
+    Example:
+    To enable Hyper3D: `set_hyper3d_integration(enabled=True)`
+    To disable Hyper3D: `set_hyper3d_integration(enabled=False)`
+
+    Parameters:
+    - enabled: Boolean value to enable (True) or disable (False) the integration.
+    
+    Returns:
+    A JSON string indicating the outcome of the operation.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command(
+            "set_integration_enabled",
+            {"integration_name": "hyper3d", "enabled": enabled}
+        )
+        
+        if result.get("status") == "success":
+            return result.get("message", "Hyper3D integration status updated successfully.")
+        else:
+            return f"Error updating Hyper3D integration: {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in set_hyper3d_integration: {str(e)}")
+        return f"Error setting Hyper3D integration: {str(e)}"
+
 def _process_bbox(original_bbox: list[float] | list[int] | None) -> list[int] | None:
     if original_bbox is None:
         return None
@@ -691,6 +756,334 @@ def import_generated_asset(
     except Exception as e:
         logger.error(f"Error generating Hyper3D task: {str(e)}")
         return f"Error generating Hyper3D task: {str(e)}"
+
+
+@mcp.tool()
+def add_geometry_node_modifier(ctx: Context, object_name: str, modifier_name: str = "GeometryNodes") -> str:
+    """
+        Adds a new Geometry Nodes modifier to the specified object in Blender.
+
+        Example:
+        To add a Geometry Nodes modifier to an object named "Cube":
+        `add_geometry_node_modifier(object_name="Cube", modifier_name="MyGeoNodes")`
+
+        Parameters:
+        - object_name: The name of the Blender object to add the modifier to.
+        - modifier_name: Optional name for the new modifier. Defaults to "GeometryNodes".
+        
+        Returns:
+        A JSON string indicating success or failure and a message.
+        """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command(
+            "add_geometry_node_modifier",
+            {"object_name": object_name, "modifier_name": modifier_name}
+        )
+        
+        # The addon already returns a dict with "status" and "message"
+        if result.get("status") == "success":
+            return result.get("message", "Geometry Nodes modifier added successfully.")
+        else:
+            return f"Error adding Geometry Nodes modifier: {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in add_geometry_node_modifier: {str(e)}")
+        return f"Error adding Geometry Nodes modifier: {str(e)}"
+
+@mcp.tool()
+def set_geometry_node_input(ctx: Context, object_name: str, modifier_name: str, input_name: str, value: Any) -> str:
+    """
+        Sets the value of a specified input within a Geometry Nodes modifier on an object.
+        The input is identified by its name as it appears in the modifier's interface or node group.
+
+        Example:
+        If "Cube" has a Geometry Nodes modifier "MyGeoNodes" with an input named "Scale Factor":
+        `set_geometry_node_input(object_name="Cube", modifier_name="MyGeoNodes", input_name="Scale Factor", value=1.5)`
+        To set a vector input (e.g., for a Transform node):
+        `set_geometry_node_input(object_name="Cube", modifier_name="MyGeoNodes", input_name="Translation", value=[1.0, 0.5, 0.0])`
+
+        Parameters:
+        - object_name: The name of the Blender object.
+        - modifier_name: The name of the Geometry Nodes modifier.
+        - input_name: The name (or identifier) of the input socket in the Geometry Node tree's interface.
+        - value: The value to set for the input. Can be float, int, bool, or list of floats for vectors.
+        
+        Returns:
+        A JSON string indicating success or failure and a message.
+        """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command(
+            "set_geometry_node_input",
+            {
+                "object_name": object_name,
+                "modifier_name": modifier_name,
+                "input_name": input_name,
+                "value": value
+            }
+        )
+        
+        if result.get("status") == "success":
+            return result.get("message", f"Input '{input_name}' set successfully.")
+        else:
+            return f"Error setting Geometry Nodes input '{input_name}': {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in set_geometry_node_input: {str(e)}")
+        return f"Error setting Geometry Nodes input: {str(e)}"
+
+@mcp.tool()
+def get_geometry_node_inputs(ctx: Context, object_name: str, modifier_name: str) -> str:
+    """
+        Retrieves a list of inputs from a Geometry Nodes modifier on a specified object.
+        Each input includes its name, data type, and current value.
+
+        Example:
+        `get_geometry_node_inputs(object_name="Cube", modifier_name="MyGeoNodes")`
+
+        Parameters:
+        - object_name: The name of the Blender object.
+        - modifier_name: The name of the Geometry Nodes modifier.
+        
+        Returns:
+        A JSON string representing a list of dictionaries, each describing an input 
+        (e.g., `[{"name": "Input_1", "type": "VALUE", "value": 0.5, "identifier": "Socket_001"}]`).
+        """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command(
+            "get_geometry_node_inputs",
+            {"object_name": object_name, "modifier_name": modifier_name}
+        )
+        
+        # The addon returns a dict with "status", "inputs", etc.
+        if result.get("status") == "success":
+            inputs_list = result.get("inputs", [])
+            if not inputs_list:
+                return f"No inputs found for modifier '{modifier_name}' on object '{object_name}'."
+            # Pretty-print the list of inputs
+            return json.dumps(inputs_list, indent=2)
+        else:
+            return f"Error getting Geometry Nodes inputs: {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in get_geometry_node_inputs: {str(e)}")
+        return f"Error getting Geometry Nodes inputs: {str(e)}"
+
+
+@mcp.tool()
+def get_camera_info(ctx: Context, camera_name: str = None) -> str:
+    """
+    Retrieves information about a specified camera or the active scene camera.
+
+    Example:
+    `get_camera_info(camera_name="MyCamera")`
+    `get_camera_info()` (for active scene camera)
+
+    Parameters:
+    - camera_name: Optional name of the camera. If None, uses the active scene camera.
+    
+    Returns:
+    A JSON string with camera details (location, rotation, focal length, etc.).
+    """
+    try:
+        blender = get_blender_connection()
+        params = {}
+        if camera_name:
+            params["camera_name"] = camera_name
+        
+        result = blender.send_command("get_camera_info", params)
+        
+        # The addon returns a dict with "status" and "camera_info" or "message"
+        if result.get("status") == "success" and "camera_info" in result:
+            return json.dumps(result["camera_info"], indent=2)
+        elif result.get("status") == "error":
+            return f"Error from Blender: {result.get('message', 'Unknown error from addon.')}"
+        else: # Should not happen if addon behaves as expected
+            return json.dumps(result, indent=2) 
+            
+    except Exception as e:
+        logger.error(f"Error in get_camera_info: {str(e)}")
+        return f"Error getting camera info: {str(e)}"
+
+@mcp.tool()
+def set_camera_properties(ctx: Context, properties: Dict[str, Any], camera_name: str = None) -> str:
+    """
+    Sets properties for a specified camera or the active scene camera.
+
+    Example:
+    To set focal length:
+    `set_camera_properties(properties={"lens": 50.0}, camera_name="MyCamera")`
+    To set location:
+    `set_camera_properties(properties={"location": [1.0, 2.0, 3.0]})` (for active scene camera)
+    To set multiple properties for the active camera:
+    `set_camera_properties(properties={"type": "ORTHO", "ortho_scale": 10.0, "clip_end": 500.0})`
+
+
+    Parameters:
+    - properties: Dictionary of properties to set (e.g., {"lens": 50, "location": [x,y,z]}). 
+                  Valid keys include object properties like "location", "rotation_euler", "scale",
+                  and camera data properties like "type", "lens" (or "focal_length"), "ortho_scale",
+                  "sensor_width", "sensor_height", "sensor_fit", "clip_start", "clip_end",
+                  "shift_x", "shift_y".
+    - camera_name: Optional name of the camera. If None, uses the active scene camera.
+    
+    Returns:
+    A JSON string indicating success or failure, and a message detailing applied/skipped properties.
+    """
+    try:
+        blender = get_blender_connection()
+        params = {"properties": properties}
+        if camera_name:
+            params["camera_name"] = camera_name
+            
+        result = blender.send_command("set_camera_properties", params)
+        
+        # The addon returns a dict with "status" and "message".
+        if result.get("status") == "success":
+            return result.get("message", "Camera properties update processed.")
+        else:
+            return f"Error setting camera properties: {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in set_camera_properties: {str(e)}")
+        return f"Error setting camera properties: {str(e)}"
+
+@mcp.tool()
+def create_camera(ctx: Context, camera_name: str, camera_type: str = 'PERSP', location: List[float] = None, rotation_euler: List[float] = None) -> str:
+    """
+    Creates a new camera in the Blender scene.
+
+    Example:
+    `create_camera(camera_name="NewViewCam", camera_type="PANO", location=[0, -10, 2], rotation_euler=[1.5708, 0, 0])`
+
+    Parameters:
+    - camera_name: Name for the new camera.
+    - camera_type: Type of camera (e.g., 'PERSP', 'ORTHO', 'PANO'). Defaults to 'PERSP'.
+    - location: Optional list of 3 floats for [X,Y,Z] location. Defaults to [0,0,0].
+    - rotation_euler: Optional list of 3 floats for [X,Y,Z] Euler rotation in radians. Defaults to [0,0,0].
+    
+    Returns:
+    A JSON string indicating success or failure.
+    """
+    # Handle default values for location and rotation_euler
+    loc = location if location is not None else [0.0, 0.0, 0.0]
+    rot = rotation_euler if rotation_euler is not None else [0.0, 0.0, 0.0]
+
+    try:
+        blender = get_blender_connection()
+        params = {
+            "camera_name": camera_name,
+            "camera_type": camera_type,
+            "location": loc,
+            "rotation_euler": rot
+        }
+        result = blender.send_command("create_camera", params)
+        
+        if result.get("status") == "success":
+            return result.get("message", f"Camera '{camera_name}' created successfully.")
+        else:
+            return f"Error creating camera: {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in create_camera: {str(e)}")
+        return f"Error creating camera: {str(e)}"
+
+@mcp.tool()
+def set_active_scene_camera(ctx: Context, camera_name: str) -> str:
+    """
+    Sets a camera as the active camera for the current scene.
+
+    Example:
+    `set_active_scene_camera(camera_name="MyCamera")`
+
+    Parameters:
+    - camera_name: The name of the camera to set as active.
+    
+    Returns:
+    A JSON string indicating success or failure.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("set_active_scene_camera", {"camera_name": camera_name})
+        
+        if result.get("status") == "success":
+            return result.get("message", f"Camera '{camera_name}' set as active scene camera.")
+        else:
+            return f"Error setting active scene camera: {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in set_active_scene_camera: {str(e)}")
+        return f"Error setting active scene camera: {str(e)}"
+
+
+@mcp.tool()
+def list_active_addons(ctx: Context) -> str:
+    """
+    Lists addons that Blender is currently aware of and has preferences for.
+    This usually includes all enabled addons and any others that have been active.
+
+    Example:
+    `list_active_addons()`
+
+    Returns:
+    A JSON string listing addons with their name, ID (module name), and version.
+    """
+    try:
+        blender = get_blender_connection()
+        result = blender.send_command("list_active_addons") # No params needed
+        
+        if result.get("status") == "success" and "addons" in result:
+            addons_list = result.get("addons", [])
+            if not addons_list:
+                return "No active addons found or reported by Blender."
+            return json.dumps(addons_list, indent=2)
+        elif result.get("status") == "error":
+            return f"Error from Blender: {result.get('message', 'Unknown error from addon.')}"
+        else:
+            return json.dumps(result, indent=2) # Fallback for unexpected structure
+
+    except Exception as e:
+        logger.error(f"Error in list_active_addons: {str(e)}")
+        return f"Error listing active addons: {str(e)}"
+
+@mcp.tool()
+def execute_addon_operator(ctx: Context, operator_name: str, operator_properties: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Executes a Blender operator by its Python identifier string, optionally with properties.
+
+    **CRITICAL WARNING:** This tool is EXPERIMENTAL and can lead to errors or Blender
+    instability if misused. You MUST provide the exact, correct Blender operator name
+    (e.g., "mesh.primitive_cube_add", not "bpy.ops.mesh.primitive_cube_add" unless that's how the addon registers it)
+    and valid properties for that specific operator. Incorrect usage may crash Blender
+    or produce unexpected results. Consult Blender's Python API or addon documentation
+    for correct operator identifiers and properties.
+
+    Example:
+    To add a default cube: `execute_addon_operator(operator_name="mesh.primitive_cube_add")`
+    To add a cube with specific properties:
+    `execute_addon_operator(operator_name="mesh.primitive_cube_add", operator_properties={"size": 1.5, "location": [1,2,3]})`
+
+    Parameters:
+    - operator_name: The Python identifier string for the operator (e.g., "object.select_all").
+    - operator_properties: Optional dictionary of properties to pass to the operator.
+                           Property names and value types must exactly match the operator's requirements.
+    
+    Returns:
+    A string message from Blender indicating the outcome, including operator result if successful.
+    """
+    op_props = operator_properties or {}
+    try:
+        blender = get_blender_connection()
+        params = {
+            "operator_name": operator_name,
+            "operator_properties": op_props
+        }
+        result = blender.send_command("execute_addon_operator", params)
+        
+        # The addon returns a dict with "status", "message", and "operator_result".
+        if result.get("status") == "success":
+            return f"{result.get('message', 'Operator executed.')} Result: {result.get('operator_result', 'N/A')}"
+        else:
+            return f"Error executing operator: {result.get('message', 'Unknown error from addon.')}"
+    except Exception as e:
+        logger.error(f"Error in execute_addon_operator for '{operator_name}': {str(e)}")
+        return f"Error executing operator '{operator_name}': {str(e)}"
 
 @mcp.prompt()
 def asset_creation_strategy() -> str:

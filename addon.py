@@ -200,6 +200,16 @@ class BlenderMCPServer:
             "execute_code": self.execute_code,
             "get_polyhaven_status": self.get_polyhaven_status,
             "get_hyper3d_status": self.get_hyper3d_status,
+            "add_geometry_node_modifier": self.add_geometry_node_modifier,
+            "set_geometry_node_input": self.set_geometry_node_input,
+            "get_geometry_node_inputs": self.get_geometry_node_inputs,
+            "set_integration_enabled": self.set_integration_enabled,
+            "get_camera_info": self.get_camera_info,
+            "set_camera_properties": self.set_camera_properties,
+            "create_camera": self.create_camera,
+            "set_active_scene_camera": self.set_active_scene_camera,
+            "list_active_addons": self.list_active_addons,
+            "execute_addon_operator": self.execute_addon_operator,
         }
         
         # Add Polyhaven handlers only if enabled
@@ -1067,6 +1077,25 @@ class BlenderMCPServer:
                             3. Restart the connection to Claude"""
             }
 
+    def set_integration_enabled(self, integration_name: str, enabled: bool):
+        """Enables or disables a specified integration."""
+        try:
+            if integration_name.lower() == "polyhaven":
+                bpy.context.scene.blendermcp_use_polyhaven = enabled
+                status_message = f"PolyHaven integration {'enabled' if enabled else 'disabled'}."
+            elif integration_name.lower() == "hyper3d":
+                bpy.context.scene.blendermcp_use_hyper3d = enabled
+                status_message = f"Hyper3D integration {'enabled' if enabled else 'disabled'}."
+            else:
+                return {"status": "error", "message": f"Unknown integration name: {integration_name}"}
+            
+            return {"status": "success", "message": status_message}
+        except Exception as e:
+            # Log the exception for debugging
+            print(f"Error in set_integration_enabled: {str(e)}")
+            traceback.print_exc()
+            return {"status": "error", "message": f"Failed to set integration {integration_name}: {str(e)}"}
+
     def create_rodin_job(self, *args, **kwargs):
         match bpy.context.scene.blendermcp_hyper3d_mode:
             case "MAIN_SITE":
@@ -1371,6 +1400,452 @@ class BlenderMCPServer:
             }
         except Exception as e:
             return {"succeed": False, "error": str(e)}
+
+    def add_geometry_node_modifier(self, object_name: str, modifier_name: str = "GeometryNodes"):
+        """Adds a Geometry Nodes modifier to the specified object."""
+        obj = bpy.data.objects.get(object_name)
+        if not obj:
+            return {"status": "error", "message": f"Object '{object_name}' not found."}
+
+        try:
+            modifier = obj.modifiers.new(name=modifier_name, type='NODES')
+            return {
+                "status": "success",
+                "message": f"Geometry Nodes modifier '{modifier.name}' added to object '{object_name}'.",
+                "object_name": object_name,
+                "modifier_name": modifier.name
+            }
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to add Geometry Nodes modifier: {str(e)}"}
+
+    def set_geometry_node_input(self, object_name: str, modifier_name: str, input_name: str, value: any):
+        """Sets an input value on a Geometry Nodes modifier."""
+        obj = bpy.data.objects.get(object_name)
+        if not obj:
+            return {"status": "error", "message": f"Object '{object_name}' not found."}
+
+        modifier = obj.modifiers.get(modifier_name)
+        if not modifier or modifier.type != 'NODES':
+            return {"status": "error", "message": f"Geometry Nodes modifier '{modifier_name}' not found on object '{object_name}'."}
+
+        node_group = modifier.node_group
+        if not node_group:
+            # This can happen if the modifier was just added and no node group is assigned yet.
+            # Create a new node group for it.
+            try:
+                node_group = bpy.data.node_groups.new(name=f"{object_name}_{modifier_name}_Nodes", type='GeometryNodeTree')
+                modifier.node_group = node_group
+                # Add default Group Input and Group Output nodes
+                group_input_node = node_group.nodes.new('NodeGroupInput')
+                group_input_node.location = (-200, 0)
+                group_output_node = node_group.nodes.new('NodeGroupOutput')
+                group_output_node.location = (200, 0)
+                node_group.links.new(group_input_node.outputs['Geometry'], group_output_node.inputs['Geometry'])
+            except Exception as e:
+                 return {"status": "error", "message": f"Failed to create or assign node group for modifier '{modifier_name}': {str(e)}"}
+
+
+        socket_input = None
+        # Iterate over node_group.inputs, which are the sockets on the Group Input node
+        for item in node_group.inputs:
+            if item.name == input_name: # In modern Blender, use 'name' not 'identifier' for comparison
+                socket_input = item
+                break
+        
+        if not socket_input:
+             # If input is not found, try to find it in the Group Input node directly
+            group_input_node = None
+            for node in node_group.nodes:
+                if node.type == 'GROUP_INPUT':
+                    group_input_node = node
+                    break
+            
+            if group_input_node:
+                for inp in group_input_node.outputs: # Outputs of Group Input node are inputs to the modifier
+                    if inp.name == input_name: # Check by name
+                        # This means the input exists on the node but not on the modifier interface.
+                        # This case is tricky as we can't directly set it via modifier[input_name]
+                        # We need to set the default_value of the socket on the node_group's interface
+                        # Check if it's exposed to the interface via node_group.inputs
+                        if input_name in node_group.inputs:
+                            socket_input = node_group.inputs[input_name]
+                            break
+                        else:
+                            # If not exposed, we might need to create it or inform the user.
+                            # For now, let's try to create/expose it if it makes sense.
+                            # However, directly setting node.outputs[input_name].default_value is not standard.
+                            # The standard way is via modifier[input_name] or node_group.inputs[input_name].default_value
+                            return {"status": "error", "message": f"Input '{input_name}' found on Group Input node but not exposed to modifier interface. Please expose it first."}
+            
+            if not socket_input:
+                 return {"status": "error", "message": f"Input '{input_name}' not found in Geometry Nodes modifier '{modifier_name}'."}
+
+
+        try:
+            socket_type = socket_input.type
+            if socket_type == 'VECTOR':
+                if isinstance(value, (list, tuple)) and len(value) == 3:
+                    modifier[socket_input.identifier] = mathutils.Vector(value)
+                else:
+                    return {"status": "error", "message": f"Input '{input_name}' expects a Vector (list/tuple of 3 numbers), but received {type(value)}: {value}."}
+            elif socket_type == 'INT':
+                modifier[socket_input.identifier] = int(value)
+            elif socket_type == 'FLOAT':
+                modifier[socket_input.identifier] = float(value)
+            elif socket_type == 'BOOLEAN':
+                modifier[socket_input.identifier] = bool(value)
+            elif socket_type == 'RGBA': # Color
+                 if isinstance(value, (list, tuple)) and len(value) in [3, 4]:
+                    modifier[socket_input.identifier] = mathutils.Color(value[:3]) if len(value) == 3 else mathutils.Color(value[:3]) # alpha is separate for some sockets or part of the list
+                    # For RGBA, it's often a list/tuple of 4 floats (R,G,B,A)
+                    if len(value) == 4: # Assuming value is [R,G,B,A]
+                         modifier[socket_input.identifier] = value # Directly assign if it's a list of 4 floats
+                    elif len(value) == 3: # Assuming value is [R,G,B], alpha defaults to 1
+                         modifier[socket_input.identifier] = list(value) + [1.0]
+                    else:
+                        return {"status": "error", "message": f"Input '{input_name}' (Color) expects a list/tuple of 3 or 4 numbers."}
+
+            elif socket_type == 'STRING':
+                modifier[socket_input.identifier] = str(value)
+            # Add more type checks as needed, e.g. Object, Collection, Material, Texture
+            elif socket_type == 'OBJECT':
+                if isinstance(value, str): # Assume string is object name
+                    obj_val = bpy.data.objects.get(value)
+                    if not obj_val:
+                        return {"status": "error", "message": f"Object '{value}' provided for input '{input_name}' not found."}
+                    modifier[socket_input.identifier] = obj_val
+                elif value is None: # Allow unsetting an object input
+                     modifier[socket_input.identifier] = None
+                else: # TODO: Could also be bpy.types.Object if passed from internal script
+                    return {"status": "error", "message": f"Input '{input_name}' expects an Object name (str) or None."}
+            else:
+                # For other types (GEOMETRY, COLLECTION, MATERIAL, IMAGE, etc.), direct assignment might work if `value` is correct type.
+                # However, robust handling requires knowing what `value` format to expect for these.
+                # For now, try direct assignment and catch errors.
+                try:
+                    modifier[socket_input.identifier] = value
+                except TypeError:
+                     return {"status": "error", "message": f"Input '{input_name}' has type '{socket_type}' which is not directly settable with value '{value}' of type {type(value)}. Or the input is not exposed on the modifier interface."}
+                except Exception as e: # Catch any other assignment error
+                    # Check if the input is actually available on the modifier itself
+                    # sometimes node_group.inputs exists but modifier[identifier] does not
+                    if socket_input.identifier not in modifier:
+                         return {"status": "error", "message": f"Input '{input_name}' (identifier: {socket_input.identifier}) of type '{socket_type}' is defined in the node group but not exposed or settable on the modifier. Please ensure it is an output of the 'Group Input' node and its interface socket is correctly configured."}
+                    return {"status": "error", "message": f"Failed to set input '{input_name}' of type '{socket_type}' with value '{value}': {str(e)}"}
+
+
+            return {
+                "status": "success",
+                "message": f"Input '{input_name}' set on modifier '{modifier_name}' of object '{object_name}'.",
+                "object_name": object_name,
+                "modifier_name": modifier_name,
+                "input_name": input_name,
+                "new_value": value
+            }
+        except Exception as e:
+            # More detailed error if input is not found in modifier's settable properties
+            if input_name not in modifier:
+                 return {"status": "error", "message": f"Input '{input_name}' (identifier: {socket_input.identifier}) not found in modifier's settable properties. It might be defined in the node group but not properly exposed to the modifier interface. Error: {str(e)}"}
+            return {"status": "error", "message": f"Failed to set input '{input_name}': {str(e)}"}
+
+    def get_geometry_node_inputs(self, object_name: str, modifier_name: str):
+        """Gets all input values from a Geometry Nodes modifier."""
+        obj = bpy.data.objects.get(object_name)
+        if not obj:
+            return {"status": "error", "message": f"Object '{object_name}' not found."}
+
+        modifier = obj.modifiers.get(modifier_name)
+        if not modifier or modifier.type != 'NODES':
+            return {"status": "error", "message": f"Geometry Nodes modifier '{modifier_name}' not found on object '{object_name}'."}
+
+        node_group = modifier.node_group
+        if not node_group:
+            return {"status": "success", "inputs": [], "message": f"Modifier '{modifier_name}' has no node group assigned."} # Or error?
+
+        inputs_info = []
+        for item in node_group.inputs: # These are bpy.types.NodeSocketInterface* items
+            input_data = {
+                "name": item.name, # User-facing name in the UI
+                "identifier": item.identifier, # Internal ID used for access modifier[identifier]
+                "type": item.type,
+                "description": item.description,
+                "value": None
+            }
+            
+            try:
+                # Access the value through the modifier using the socket's identifier
+                # This gets the *current* value, not necessarily the default_value if it's overridden
+                # For "Input" sockets on a modifier, this is the way to get their current effective value.
+                current_value = modifier[item.identifier]
+
+                if isinstance(current_value, mathutils.Vector):
+                    input_data["value"] = list(current_value)
+                elif isinstance(current_value, mathutils.Color):
+                     # Blender Color can be 3 or 4 components (RGB or RGBA)
+                    input_data["value"] = list(current_value)
+                elif isinstance(current_value, (bpy.types.Object, bpy.types.Material, bpy.types.Collection, bpy.types.Texture, bpy.types.Image)):
+                    input_data["value"] = current_value.name if current_value else None
+                elif type(current_value).__name__ == "bpy_prop_array": # For some arrays like int[3]
+                     input_data["value"] = list(current_value)
+                else: # float, int, bool, string
+                    input_data["value"] = current_value
+            except KeyError:
+                # This can happen if the input socket is defined in the node tree's interface (node_group.inputs)
+                # but is not actually exposed or settable on the modifier itself.
+                # This could be due to its type (e.g. Geometry) or how the group is set up.
+                # In this case, we can try to report its default_value from the socket definition.
+                try:
+                    default_value = item.default_value
+                    if isinstance(default_value, mathutils.Vector):
+                        input_data["value"] = list(default_value)
+                    elif isinstance(default_value, mathutils.Color):
+                        input_data["value"] = list(default_value)
+                    # bpy.types.Object etc. for default_value is usually None or not set.
+                    # If it were an object, item.default_value would hold the bpy.types.Object itself.
+                    elif isinstance(default_value, (bpy.types.Object, bpy.types.Material, bpy.types.Collection, bpy.types.Texture, bpy.types.Image)):
+                         input_data["value"] = default_value.name if default_value else None
+                    elif type(default_value).__name__ == "bpy_prop_array":
+                         input_data["value"] = list(default_value)
+                    else:
+                        input_data["value"] = default_value
+                    input_data["note"] = "Value shown is the default_value from the node group interface as it's not directly readable from the modifier."
+                except Exception as e_default:
+                    input_data["value"] = f"Error retrieving default value: {str(e_default)}"
+                    input_data["note"] = "Could not retrieve value from modifier or default_value from socket."
+
+            except Exception as e:
+                input_data["value"] = f"Error retrieving value: {str(e)}"
+            
+            inputs_info.append(input_data)
+
+        return {
+            "status": "success",
+            "object_name": object_name,
+            "modifier_name": modifier_name,
+            "inputs": inputs_info
+        }
+
+    #region Camera Control
+    def get_camera_info(self, camera_name: str = None):
+        """Gets information about the specified camera or the active scene camera."""
+        try:
+            cam_obj = None
+            if camera_name:
+                cam_obj = bpy.data.objects.get(camera_name)
+                if not cam_obj:
+                    return {"status": "error", "message": f"Camera object '{camera_name}' not found."}
+                if cam_obj.type != 'CAMERA':
+                    return {"status": "error", "message": f"Object '{camera_name}' is not a camera (type is {cam_obj.type})."}
+            else:
+                cam_obj = bpy.context.scene.camera
+                if not cam_obj:
+                    return {"status": "error", "message": "No active camera in the scene and no camera_name provided."}
+
+            cam_data = cam_obj.data
+            if not isinstance(cam_data, bpy.types.Camera): # Should be redundant if cam_obj.type == 'CAMERA'
+                 return {"status": "error", "message": f"Object '{cam_obj.name}' does not have valid camera data."}
+
+
+            info = {
+                "object_name": cam_obj.name,
+                "location": list(cam_obj.location),
+                "rotation_euler": [cam_obj.rotation_euler.x, cam_obj.rotation_euler.y, cam_obj.rotation_euler.z],
+                "scale": list(cam_obj.scale),
+                "camera_data": {
+                    "type": cam_data.type,
+                    "lens": cam_data.lens if cam_data.type == 'PERSP' else None,
+                    "focal_length": cam_data.lens if cam_data.type == 'PERSP' else None, # Alias for lens
+                    "ortho_scale": cam_data.ortho_scale if cam_data.type == 'ORTHO' else None,
+                    "sensor_width": cam_data.sensor_width,
+                    "sensor_height": cam_data.sensor_height,
+                    "sensor_fit": cam_data.sensor_fit,
+                    "clip_start": cam_data.clip_start,
+                    "clip_end": cam_data.clip_end,
+                    "shift_x": cam_data.shift_x,
+                    "shift_y": cam_data.shift_y,
+                }
+            }
+            return {"status": "success", "camera_info": info}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to get camera info: {str(e)}"}
+
+    def set_camera_properties(self, properties: dict, camera_name: str = None):
+        """Sets properties for the specified camera or the active scene camera."""
+        try:
+            cam_obj = None
+            if camera_name:
+                cam_obj = bpy.data.objects.get(camera_name)
+                if not cam_obj:
+                    return {"status": "error", "message": f"Camera object '{camera_name}' not found."}
+                if cam_obj.type != 'CAMERA':
+                    return {"status": "error", "message": f"Object '{camera_name}' is not a camera."}
+            else:
+                cam_obj = bpy.context.scene.camera
+                if not cam_obj:
+                    return {"status": "error", "message": "No active camera in the scene and no camera_name provided."}
+            
+            cam_data = cam_obj.data
+            applied_properties = []
+            skipped_properties = []
+
+            for key, value in properties.items():
+                try:
+                    if key in ["location", "rotation_euler", "scale"]: # Object properties
+                        if key == "location" and isinstance(value, (list, tuple)) and len(value) == 3:
+                            cam_obj.location = mathutils.Vector(value)
+                            applied_properties.append(key)
+                        elif key == "rotation_euler" and isinstance(value, (list, tuple)) and len(value) == 3:
+                            cam_obj.rotation_euler = mathutils.Euler(value, 'XYZ') # Assuming XYZ order
+                            applied_properties.append(key)
+                        elif key == "scale" and isinstance(value, (list, tuple)) and len(value) == 3:
+                            cam_obj.scale = mathutils.Vector(value)
+                            applied_properties.append(key)
+                        else:
+                            skipped_properties.append({key: f"Invalid value type or length for {key}. Expected list/tuple of 3 numbers."})
+                    
+                    # Camera data properties
+                    elif key in ["type", "lens", "focal_length", "ortho_scale", "sensor_width", "sensor_height", "sensor_fit", "clip_start", "clip_end", "shift_x", "shift_y"]:
+                        if key == "focal_length": # Alias for lens
+                            key = "lens"
+                        
+                        if hasattr(cam_data, key):
+                            setattr(cam_data, key, value)
+                            applied_properties.append(f"data.{key}")
+                        else:
+                             skipped_properties.append({key: f"Property data.{key} not found on camera data."})
+                    else:
+                        skipped_properties.append({key: "Unknown camera property."})
+                except (TypeError, ValueError) as e:
+                    skipped_properties.append({key: f"Error setting property: {str(e)}"})
+                except Exception as e:
+                    skipped_properties.append({key: f"Unexpected error setting property: {str(e)}"})
+
+
+            message = f"Camera '{cam_obj.name}' properties update attempt finished."
+            if applied_properties:
+                message += f" Applied: {', '.join(applied_properties)}."
+            if skipped_properties:
+                message += f" Skipped/Errors: {json.dumps(skipped_properties)}."
+
+            return {"status": "success", "message": message, "applied": applied_properties, "skipped": skipped_properties}
+
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to set camera properties: {str(e)}"}
+
+    def create_camera(self, camera_name: str, camera_type: str = 'PERSP', location: list = (0,0,0), rotation_euler: list = (0,0,0)):
+        """Creates a new camera in the scene."""
+        try:
+            if camera_name in bpy.data.objects:
+                 return {"status": "error", "message": f"Object named '{camera_name}' already exists."}
+
+            # Create new camera data
+            new_cam_data = bpy.data.cameras.new(name=camera_name) # Name for the data block
+            
+            valid_types = ['PERSP', 'ORTHO', 'PANO']
+            if camera_type.upper() not in valid_types:
+                return {"status": "error", "message": f"Invalid camera_type: {camera_type}. Must be one of {valid_types}."}
+            new_cam_data.type = camera_type.upper()
+
+            # Create new camera object
+            new_cam_obj = bpy.data.objects.new(name=camera_name, object_data=new_cam_data) # Name for the object
+
+            if isinstance(location, (list, tuple)) and len(location) == 3:
+                new_cam_obj.location = mathutils.Vector(location)
+            else:
+                 return {"status": "error", "message": "Invalid location format. Expected list/tuple of 3 numbers."}
+
+            if isinstance(rotation_euler, (list, tuple)) and len(rotation_euler) == 3:
+                new_cam_obj.rotation_euler = mathutils.Euler(rotation_euler, 'XYZ') # Assuming XYZ order
+            else:
+                return {"status": "error", "message": "Invalid rotation_euler format. Expected list/tuple of 3 numbers."}
+
+            # Link to scene's active collection
+            bpy.context.scene.collection.objects.link(new_cam_obj)
+            
+            return {
+                "status": "success", 
+                "message": f"Camera '{camera_name}' created successfully.",
+                "camera_name": new_cam_obj.name,
+                "location": list(new_cam_obj.location),
+                "rotation_euler": list(new_cam_obj.rotation_euler)
+            }
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to create camera: {str(e)}"}
+
+    def set_active_scene_camera(self, camera_name: str):
+        """Sets the specified camera as the active camera for the scene."""
+        try:
+            cam_obj = bpy.data.objects.get(camera_name)
+            if not cam_obj:
+                return {"status": "error", "message": f"Camera object '{camera_name}' not found."}
+            if cam_obj.type != 'CAMERA':
+                return {"status": "error", "message": f"Object '{camera_name}' is not a camera."}
+            
+            bpy.context.scene.camera = cam_obj
+            return {"status": "success", "message": f"Camera '{camera_name}' set as active scene camera."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to set active scene camera: {str(e)}"}
+
+    #endregion
+
+    #region Addon Control
+    def list_active_addons(self):
+        """Lists addons that Blender is aware of and has preferences for (usually active/enabled)."""
+        try:
+            active_addons_info = []
+            # bpy.context.preferences.addons provides AddonPreferences objects
+            for addon_prefs in bpy.context.preferences.addons.values():
+                addon_info = {
+                    "name": addon_prefs.name,
+                    "id": addon_prefs.module,
+                    "version": ".".join(map(str, addon_prefs.version)) if hasattr(addon_prefs, 'version') and addon_prefs.version else "N/A"
+                }
+                active_addons_info.append(addon_info)
+            
+            return {"status": "success", "addons": active_addons_info}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to list active addons: {str(e)}"}
+
+    def execute_addon_operator(self, operator_name: str, operator_properties: dict = None):
+        """Executes a Blender operator by its Python identifier string."""
+        try:
+            if not operator_name:
+                return {"status": "error", "message": "Operator name cannot be empty."}
+
+            # Clean up operator_name: remove "bpy.ops." if present
+            if operator_name.startswith("bpy.ops."):
+                operator_name_parts = operator_name[len("bpy.ops."):].split('.')
+            else:
+                operator_name_parts = operator_name.split('.')
+
+            if len(operator_name_parts) != 2:
+                return {"status": "error", "message": f"Invalid operator name format: '{operator_name}'. Expected 'context.operator_id' (e.g., 'mesh.primitive_cube_add')."}
+
+            context_name, operator_id = operator_name_parts[0], operator_name_parts[1]
+
+            op_group = getattr(bpy.ops, context_name)
+            op_func = getattr(op_group, operator_id)
+
+            if operator_properties is None:
+                operator_properties = {}
+            
+            # Execute the operator
+            # Some operators return a set, e.g. {'FINISHED'}, {'CANCELLED'}. Others might return None or other types.
+            # We'll capture this but primarily focus on whether an exception occurred.
+            result = op_func(**operator_properties) 
+            
+            return {
+                "status": "success", 
+                "message": f"Operator '{operator_name}' executed.",
+                "operator_result": str(result) # Convert result to string as it can be a set.
+            }
+        except AttributeError as e:
+            return {"status": "error", "message": f"Operator not found or invalid: {operator_name}. Details: {str(e)}"}
+        except (TypeError, RuntimeError) as e: # TypeError for bad args, RuntimeError for context issues
+            return {"status": "error", "message": f"Error executing operator '{operator_name}' with properties {operator_properties}. Details: {str(e)}"}
+        except Exception as e:
+            return {"status": "error", "message": f"An unexpected error occurred while executing operator '{operator_name}': {str(e)}"}
+
     #endregion
 
 # Blender UI Panel
