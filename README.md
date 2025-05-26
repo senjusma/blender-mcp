@@ -163,6 +163,14 @@ Once the config file has been set on Claude, and the addon is running on Blender
 - Execute any Python code in Blender
 - Download the right models, assets and HDRIs through [Poly Haven](https://polyhaven.com/)
 - AI generated 3D models through [Hyper3D Rodin](https://hyper3d.ai/)
+    - **Camera Control**:
+        - Create new cameras (`create_camera`) with specified type, position, and rotation.
+        - Get detailed information about existing cameras (`get_camera_info`).
+        - Modify camera properties like focal length, sensor size, location, and rotation (`set_camera_properties`).
+        - Set the active scene camera (`set_active_scene_camera`).
+    - **Addon Interaction (Experimental)**:
+        - List currently active Blender addons (`list_active_addons`).
+        - Execute Blender operators by their Python name (e.g., `mesh.primitive_cube_add`) using `execute_addon_operator`. *Note: This is an experimental feature. Users must provide exact operator names and properties. Incorrect usage can lead to errors or instability.*
 
 
 ### Example Commands
@@ -205,6 +213,7 @@ The system uses a simple JSON-based protocol over TCP sockets:
 - The `execute_blender_code` tool allows running arbitrary Python code in Blender, which can be powerful but potentially dangerous. Use with caution in production environments. ALWAYS save your work before using it.
 - Poly Haven requires downloading models, textures, and HDRI images. If you do not want to use it, please turn it off in the checkbox in Blender. 
 - Complex operations might need to be broken down into smaller steps
+    - The `execute_addon_operator` tool provides powerful access to Blender's operator system. While versatile, it requires users to know the precise Python identifier for an operator and its valid properties. Incorrect usage can lead to errors or unexpected behavior in Blender. Use with understanding and caution.
 
 
 ## Contributing
